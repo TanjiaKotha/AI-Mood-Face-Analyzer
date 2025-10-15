@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Mood & Face Analyzer</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- face-api.js for AI face detection -->
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    <style>
+        /* Custom styles to overlay the canvas on top of the video element */
+        .video-container {
+            position: relative;
+            width: 720px;
+            height: 560px;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .capitalize {
+            text-transform: capitalize;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-sans flex items-center justify-center min-h-screen flex-col p-4">
+
+    <div class="w-full max-w-3xl text-center mb-8">
+        <h1 class="text-4xl font-bold mb-2 bg-gradient-to-r from-blue-400 to-purple-500 text-transparent bg-clip-text">AI Mood & Face Analyzer</h1>
+        <p class="text-gray-400">Allow camera access to start detecting faces and analyzing details in real-time.</p>
+    </div>
+
+    <!-- Container for the loading message -->
+    <div id="loading" class="text-center p-4 bg-gray-800 rounded-lg shadow-lg">
+        <p class="text-lg">Loading AI Models...</p>
+        <p class="text-sm text-gray-400">This may take a moment.</p>
+        <div class="animate-pulse mt-4 w-16 h-16 mx-auto rounded-full bg-blue-500"></div>
+    </div>
+
+    <!-- Container for video and canvas, initially hidden -->
+    <div id="video-wrapper" class="video-container shadow-2xl rounded-lg border-2 border-gray-700" style="display: none;">
+        <video id="video" width="720" height="560" autoplay muted playsinline></video>
+        <!-- The canvas will be created and appended here by the script -->
+    </div>
+
+    <!-- Container for the detection report -->
+    <div id="report-card" class="mt-8 p-6 bg-gray-800 rounded-lg shadow-lg w-full max-w-sm text-left" style="display: none;">
+        <h2 class="text-2xl font-bold mb-4 text-center text-blue-400">Detection Report</h2>
+        <div id="report-content">
+            <p class="text-gray-400 text-center">Searching for a face...</p>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const loadingMessage = document.getElementById('loading');
+        const videoWrapper = document.getElementById('video-wrapper');
+        const reportCard = document.getElementById('report-card');
+        const reportContent = document.getElementById('report-content');
+
+        // Function to map expression to a mood score
+        const getMoodRating = (expression) => {
+            const moodScores = {
+                happy: 10,
+                surprised: 8,
+                neutral: 7,
+                disgusted: 3,
+                fearful: 2,
+                sad: 2,
+                angry: 1
+            };
+            return moodScores[expression] || 5; // Default to 5 if expression is not in the map
+        };
+
+        // Load AI models from the face-api.js CDN
+        const loadModels = async () => {
+            const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
+            try {
+                await Promise.all([
+                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
+                    faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL)
+                ]);
+            } catch (error) {
+                console.error("Failed to load models:", error);
+                loadingMessage.innerText = "Error loading AI models. Please refresh the page.";
+            }
+        };
+
+        // Access the user's webcam
+        const startWebcam = () => {
+            navigator.mediaDevices.getUserMedia({
+                video: {}
+            })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(err => {
+                console.error("Error accessing webcam:", err);
+                loadingMessage.innerText = "Could not access the webcam. Please grant camera permissions and refresh.";
+            });
+        };
+
+        // Main function to run everything
+        const runFaceDetection = async () => {
+            await loadModels();
+            startWebcam();
+
+            video.addEventListener('play', () => {
+                // Hide loading message and show video and report card
+                loadingMessage.style.display = 'none';
+                videoWrapper.style.display = 'block';
+                reportCard.style.display = 'block';
+
+                // Create a canvas to draw on
+                const canvas = faceapi.createCanvasFromMedia(video);
+                videoWrapper.append(canvas);
+
+                const displaySize = { width: video.width, height: video.height };
+                faceapi.matchDimensions(canvas, displaySize);
+
+                // Run detection every 100 milliseconds
+                setInterval(async () => {
+                    // Detect faces and also predict age, gender, and expressions
+                    const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withAgeAndGender().withFaceExpressions();
+                    
+                    // Clear the canvas before drawing new boxes
+                    const resizedDetections = faceapi.resizeResults(detections, displaySize);
+                    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+
+                    // Draw the detection boxes
+                    faceapi.draw.drawDetections(canvas, resizedDetections);
+
+                    // Update the report card with new data
+                    if (detections.length > 0) {
+                        const { gender, genderProbability, age, expressions } = detections[0]; // Get data from the first detected face
+                        
+                        // Find the dominant expression
+                        let dominantExpression = 'neutral';
+                        let maxProbability = 0;
+                        if (expressions) {
+                            for (const [expression, probability] of Object.entries(expressions)) {
+                                if (probability > maxProbability) {
+                                    maxProbability = probability;
+                                    dominantExpression = expression;
+                                }
+                            }
+                        }
+                        
+                        const moodRating = getMoodRating(dominantExpression);
+
+                        reportContent.innerHTML = `
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center">
+                                    <span class="font-semibold text-gray-300">Gender:</span>
+                                    <span class="px-3 py-1 text-sm font-medium rounded-full bg-blue-500 text-white">${gender} (${Math.round(genderProbability * 100)}%)</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="font-semibold text-gray-300">Estimated Age:</span>
+                                    <span class="px-3 py-1 text-sm font-medium rounded-full bg-purple-500 text-white">${Math.round(age)} years</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="font-semibold text-gray-300">Expression:</span>
+                                    <span class="px-3 py-1 text-sm font-medium rounded-full bg-green-500 text-white capitalize">${dominantExpression} (${Math.round(maxProbability * 100)}%)</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="font-semibold text-gray-300">Mood Rating:</span>
+                                    <span class="px-3 py-1 text-sm font-medium rounded-full bg-yellow-500 text-white">${moodRating} / 10</span>
+                                </div>
+                                <div class="mt-4 pt-4 border-t border-gray-700">
+                                    <p class="text-xs text-gray-500 text-center">
+                                        Note: Eye color, hair color, and ethnicity detection are not supported by this model.
+                                    </p>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        reportContent.innerHTML = '<p class="text-gray-400 text-center">No face detected.</p>';
+                    }
+                }, 100);
+            });
+        };
+
+        // Start the application
+        runFaceDetection();
+    </script>
+</body>
+</html>
+
+
