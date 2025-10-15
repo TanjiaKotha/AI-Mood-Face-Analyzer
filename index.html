@@ -60,11 +60,11 @@
     <div class="w-full max-w-4xl mx-auto">
         <header class="text-center mb-6">
             <h1 class="text-4xl font-bold text-sky-400">AI Mood & Face Analyzer</h1>
-            <p class="text-slate-400 mt-2">Point your camera at a face and click "Analyze" to see the magic!</p>
+            <p class="text-slate-400 mt-2">The AI is watching. Give it a smile!</p>
         </header>
 
         <main class="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
-            <!-- Video and Analysis Button -->
+            <!-- Video Container -->
             <div class="md:col-span-2 bg-slate-800 p-4 rounded-xl shadow-lg border border-slate-700">
                 <div id="loader-container" class="flex flex-col items-center justify-center h-96">
                     <div class="loader"></div>
@@ -72,11 +72,6 @@
                 </div>
                 <div class="video-container hidden" id="video-container">
                     <video id="video" width="720" height="560" autoplay muted playsinline></video>
-                </div>
-                 <div class="mt-4 flex justify-center">
-                    <button id="analyzeBtn" class="bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 shadow-md disabled:bg-slate-600 disabled:cursor-not-allowed">
-                        Analyze Face
-                    </button>
                 </div>
             </div>
 
@@ -101,31 +96,24 @@
                         <span id="mood" class="font-bold text-xl ml-2 text-white">-- / 10</span>
                     </div>
                 </div>
-                 <p id="no-face-message" class="text-amber-400 mt-4 text-center hidden">
-                    No face detected. Please try again.
-                </p>
             </div>
         </main>
     </div>
 
     <script>
         const video = document.getElementById('video');
-        const analyzeBtn = document.getElementById('analyzeBtn');
         const loaderContainer = document.getElementById('loader-container');
         const videoContainer = document.getElementById('video-container');
         const loadingMessage = document.getElementById('loading-message');
-        const noFaceMessage = document.getElementById('no-face-message');
-        
-        // Disable button initially
-        analyzeBtn.disabled = true;
+
+        const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
 
         Promise.all([
-            // Switched to a more accurate model: SsdMobilenetv1
-            faceapi.nets.ssdMobilenetv1.loadFromUri('https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights'),
-            faceapi.nets.faceLandmark68Net.loadFromUri('https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights'),
-            faceapi.nets.faceRecognitionNet.loadFromUri('https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights'),
-            faceapi.nets.faceExpressionNet.loadFromUri('https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights'),
-            faceapi.nets.ageGenderNet.loadFromUri('https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights'),
+            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+            faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
+            faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL)
         ]).then(startVideo).catch(err => {
             loadingMessage.innerText = "Failed to load AI models. Please refresh the page.";
             console.error("Model loading error:", err);
@@ -141,58 +129,33 @@
                     loadingMessage.innerText = "Could not access the webcam. Please grant permission and refresh.";
                 });
         }
-        
-        video.addEventListener('loadedmetadata', () => {
+
+        video.addEventListener('play', () => {
             loaderContainer.classList.add('hidden');
             videoContainer.classList.remove('hidden');
-            analyzeBtn.disabled = false;
-            
+
             const canvas = faceapi.createCanvasFromMedia(video);
-            document.querySelector('.video-container').append(canvas); 
+            document.querySelector('.video-container').append(canvas);
             const displaySize = { width: video.width, height: video.height };
             faceapi.matchDimensions(canvas, displaySize);
 
-            analyzeBtn.addEventListener('click', async () => {
+            setInterval(async () => {
+                const detections = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceExpressions().withAgeAndGender();
                 canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-                noFaceMessage.classList.add('hidden');
-                resetReport();
-
-                analyzeBtn.disabled = true;
-                analyzeBtn.innerText = 'Analyzing...';
                 
-                try {
-                    console.log("Starting detection...");
-                    // Using the more accurate detector
-                    const detections = await faceapi.detectSingleFace(video, new faceapi.SsdMobilenetv1Options()).withFaceLandmarks().withFaceExpressions().withAgeAndGender();
-                    console.log("Detection result:", detections);
-                    
-                    if (detections) {
-                        const resizedDetections = faceapi.resizeResults(detections, displaySize);
-                        faceapi.draw.drawDetections(canvas, resizedDetections);
-                        updateReport(detections);
-                    } else {
-                        noFaceMessage.classList.remove('hidden');
-                        console.log("No face detected.");
-                    }
-                } catch (err) {
-                    console.error("Error during face detection:", err);
-                    noFaceMessage.innerText = "An error occurred during analysis.";
-                    noFaceMessage.classList.remove('hidden');
-                } finally {
-                    analyzeBtn.disabled = false;
-                    analyzeBtn.innerText = 'Analyze Face';
+                if (detections) {
+                    const resizedDetections = faceapi.resizeResults(detections, displaySize);
+                    faceapi.draw.drawDetections(canvas, resizedDetections);
+                    updateReport(detections);
+                } else {
+                   resetReport();
                 }
-            });
+            }, 100);
         });
 
         function updateReport(detections) {
-            const ageEl = document.getElementById('age');
-            const genderEl = document.getElementById('gender');
-            const expressionEl = document.getElementById('expression');
-            const moodEl = document.getElementById('mood');
-
-            ageEl.innerText = Math.round(detections.age);
-            genderEl.innerText = detections.gender;
+            document.getElementById('age').innerText = Math.round(detections.age);
+            document.getElementById('gender').innerText = detections.gender;
 
             if (detections.expressions) {
                 let primaryExpression = 'neutral';
@@ -203,8 +166,8 @@
                         primaryExpression = expression;
                     }
                 }
-                expressionEl.innerText = `${primaryExpression} (${(maxConfidence * 100).toFixed(1)}%)`;
-                moodEl.innerText = `${getMoodRating(primaryExpression)} / 10`;
+                document.getElementById('expression').innerText = `${primaryExpression}`;
+                document.getElementById('mood').innerText = `${getMoodRating(primaryExpression)} / 10`;
             }
         }
         
